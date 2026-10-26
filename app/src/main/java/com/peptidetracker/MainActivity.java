@@ -2,6 +2,7 @@ package com.peptidetracker;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.TimePickerDialog;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -11,6 +12,7 @@ import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -21,6 +23,8 @@ import org.json.JSONObject;
 
 import java.text.NumberFormat;
 import java.util.ArrayList;
+import java.util.Calendar;
+import java.util.Collections;
 import java.util.Locale;
 
 public class MainActivity extends Activity {
@@ -33,6 +37,7 @@ public class MainActivity extends Activity {
     private static final int LINE = Color.rgb(224, 232, 227);
 
     private final ArrayList<Record> records = new ArrayList<>();
+    private final ArrayList<ScheduleItem> dailySchedule = new ArrayList<>();
     private LinearLayout content;
     private String selectedTab = "Overview";
 
@@ -44,6 +49,7 @@ public class MainActivity extends Activity {
         getWindow().getDecorView().setSystemUiVisibility(
                 View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
         loadRecords();
+        loadSchedule();
         showScreen();
     }
 
@@ -74,10 +80,13 @@ public class MainActivity extends Activity {
         scroll.addView(content);
         root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
 
+        HorizontalScrollView navScroll = new HorizontalScrollView(this);
+        navScroll.setHorizontalScrollBarEnabled(false);
+        navScroll.setBackgroundColor(Color.WHITE);
         LinearLayout nav = new LinearLayout(this);
         nav.setPadding(dp(8), dp(8), dp(8), dp(8));
         nav.setBackgroundColor(Color.WHITE);
-        String[] tabs = {"Overview", "Inventory", "Doses", "Supplies"};
+        String[] tabs = {"Overview", "Inventory", "Doses", "Supplies", "Schedule"};
         for (String tab : tabs) {
             Button button = new Button(this);
             button.setAllCaps(false);
@@ -91,12 +100,14 @@ public class MainActivity extends Activity {
                 selectedTab = tab;
                 showScreen();
             });
-            nav.addView(button, new LinearLayout.LayoutParams(0, dp(46), 1));
+            nav.addView(button, new LinearLayout.LayoutParams(-2, dp(46)));
         }
-        root.addView(nav);
+        navScroll.addView(nav);
+        root.addView(navScroll);
         setContentView(root);
 
         if ("Overview".equals(selectedTab)) showOverview();
+        else if ("Schedule".equals(selectedTab)) showSchedule();
         else showRecords(selectedTab);
     }
 
@@ -121,6 +132,21 @@ public class MainActivity extends Activity {
         valueCard.addView(text(NumberFormat.getCurrencyInstance(Locale.getDefault()).format(total), 27, INK, true), spaced(0, 6, 0, 4));
         valueCard.addView(text("Total of prices you’ve recorded", 13, MUTED, false));
         content.addView(valueCard, spaced(0, 0, 0, 20));
+
+        sectionTitle("Daily schedule", dailySchedule.size() + " planned entries");
+        if (dailySchedule.isEmpty()) {
+            content.addView(emptyCard("No daily plan yet", "Set up a personal schedule for your planned entries."), spaced(0, 0, 0, 10));
+        } else {
+            for (int i = 0; i < dailySchedule.size() && i < 3; i++) {
+                content.addView(scheduleCard(dailySchedule.get(i), false), spaced(0, 0, 0, 8));
+            }
+        }
+        Button openSchedule = primaryButton(dailySchedule.isEmpty() ? "＋   Set up daily schedule" : "Manage daily schedule");
+        openSchedule.setOnClickListener(v -> {
+            selectedTab = "Schedule";
+            showScreen();
+        });
+        content.addView(openSchedule, spaced(0, 0, 0, 20));
 
         sectionTitle("Recent activity", "Your latest saved records");
         ArrayList<Record> recent = new ArrayList<>();
@@ -153,6 +179,126 @@ public class MainActivity extends Activity {
             }
         }
         if (found == 0) content.addView(emptyCard("No " + category.toLowerCase() + " yet", "Use the button above to add your first record."));
+    }
+
+    private void showSchedule() {
+        content.addView(text("Daily schedule", 28, INK, true), spaced(0, 0, 0, 6));
+        content.addView(text("A personal plan that repeats each day. It does not send reminders.", 14, MUTED, false), spaced(0, 0, 0, 18));
+        Button add = primaryButton("＋   Add scheduled item");
+        add.setOnClickListener(v -> showScheduleDialog());
+        content.addView(add, spaced(0, 0, 0, 20));
+
+        if (dailySchedule.isEmpty()) {
+            content.addView(emptyCard("No daily schedule yet", "Add an item with a planned time and amount. You can update your plan any time."));
+            return;
+        }
+        for (ScheduleItem item : dailySchedule) {
+            content.addView(scheduleCard(item, true), spaced(0, 0, 0, 10));
+        }
+    }
+
+    private void showScheduleDialog() {
+        LinearLayout form = new LinearLayout(this);
+        form.setOrientation(LinearLayout.VERTICAL);
+        form.setPadding(dp(20), dp(8), dp(20), dp(8));
+        EditText name = field(form, "Peptide / item", "Name", InputType.TYPE_CLASS_TEXT);
+        EditText amount = field(form, "Planned amount", "Optional", InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
+        EditText unit = field(form, "Unit", "e.g. mg, mcg", InputType.TYPE_CLASS_TEXT);
+        form.addView(text("Planned time", 12, MUTED, true), spaced(0, 10, 0, 4));
+        String[] selectedTime = {"08:00"};
+        Button timeButton = new Button(this);
+        timeButton.setAllCaps(false);
+        timeButton.setText(formatDisplayTime(selectedTime[0]));
+        timeButton.setTextColor(INK);
+        timeButton.setBackground(round(Color.rgb(247, 249, 248), 12));
+        timeButton.setOnClickListener(v -> {
+            Calendar parsed = Calendar.getInstance();
+            parsed.set(Calendar.HOUR_OF_DAY, Integer.parseInt(selectedTime[0].substring(0, 2)));
+            parsed.set(Calendar.MINUTE, Integer.parseInt(selectedTime[0].substring(3, 5)));
+            new TimePickerDialog(this, (picker, hour, minute) -> {
+                selectedTime[0] = String.format(Locale.US, "%02d:%02d", hour, minute);
+                timeButton.setText(formatDisplayTime(selectedTime[0]));
+            }, parsed.get(Calendar.HOUR_OF_DAY), parsed.get(Calendar.MINUTE), false).show();
+        });
+        form.addView(timeButton, new LinearLayout.LayoutParams(-1, dp(48)));
+        EditText notes = field(form, "Notes", "Optional", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
+        ScrollView formScroll = new ScrollView(this);
+        formScroll.addView(form);
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("Add to daily schedule")
+                .setView(formScroll)
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Save", null)
+                .create();
+        dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+            String itemName = name.getText().toString().trim();
+            if (itemName.isEmpty()) {
+                name.setError("Enter a name");
+                return;
+            }
+            ScheduleItem item = new ScheduleItem();
+            item.name = itemName;
+            item.amount = amount.getText().toString().trim();
+            item.unit = unit.getText().toString().trim();
+            item.time = selectedTime[0];
+            item.notes = notes.getText().toString().trim();
+            dailySchedule.add(item);
+            sortSchedule();
+            saveSchedule();
+            dialog.dismiss();
+            showScreen();
+        }));
+        dialog.show();
+    }
+
+    private View scheduleCard(ScheduleItem item, boolean deletable) {
+        LinearLayout outer = card();
+        outer.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout details = new LinearLayout(this);
+        details.setOrientation(LinearLayout.VERTICAL);
+        details.addView(text(item.name, 16, INK, true));
+        String amountLine = item.amount;
+        if (!item.unit.isEmpty()) amountLine += (amountLine.isEmpty() ? "" : " ") + item.unit;
+        if (!amountLine.isEmpty()) details.addView(text(amountLine, 13, MUTED, false), spaced(0, 4, 0, 0));
+        row.addView(details, new LinearLayout.LayoutParams(0, -2, 1));
+        TextView time = text(formatDisplayTime(item.time), 12, GREEN, true);
+        time.setPadding(dp(10), dp(7), dp(10), dp(7));
+        time.setBackground(round(Color.rgb(230, 242, 235), 20));
+        row.addView(time);
+        outer.addView(row);
+        if (!item.notes.isEmpty()) outer.addView(text(item.notes, 12, MUTED, false), spaced(0, 10, 0, 0));
+        if (deletable) {
+            TextView remove = text("Remove", 12, GREEN, true);
+            remove.setGravity(Gravity.RIGHT);
+            remove.setPadding(0, dp(12), 0, 0);
+            remove.setOnClickListener(v -> new AlertDialog.Builder(this)
+                    .setTitle("Remove scheduled item?")
+                    .setMessage("This item will be removed from your daily plan.")
+                    .setNegativeButton("Cancel", null)
+                    .setPositiveButton("Remove", (dialog, which) -> {
+                        dailySchedule.remove(item);
+                        saveSchedule();
+                        showScreen();
+                    }).show());
+            outer.addView(remove);
+        }
+        return outer;
+    }
+
+    private String formatDisplayTime(String time) {
+        try {
+            int hour = Integer.parseInt(time.substring(0, 2));
+            int minute = Integer.parseInt(time.substring(3, 5));
+            Calendar calendar = Calendar.getInstance();
+            calendar.set(Calendar.HOUR_OF_DAY, hour);
+            calendar.set(Calendar.MINUTE, minute);
+            return android.text.format.DateFormat.getTimeFormat(this).format(calendar.getTime());
+        } catch (Exception ignored) {
+            return time;
+        }
     }
 
     private void showAddDialog(String categoryHint) {
@@ -403,6 +549,44 @@ public class MainActivity extends Activity {
         } catch (Exception ignored) { records.clear(); }
     }
 
+    private void loadSchedule() {
+        SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
+        try {
+            JSONArray array = new JSONArray(prefs.getString("daily_schedule", "[]"));
+            for (int i = 0; i < array.length(); i++) {
+                JSONObject saved = array.getJSONObject(i);
+                ScheduleItem item = new ScheduleItem();
+                item.name = saved.optString("name", "");
+                item.amount = saved.optString("amount", "");
+                item.unit = saved.optString("unit", "");
+                item.time = saved.optString("time", "08:00");
+                item.notes = saved.optString("notes", "");
+                dailySchedule.add(item);
+            }
+            sortSchedule();
+        } catch (Exception ignored) { dailySchedule.clear(); }
+    }
+
+    private void sortSchedule() {
+        Collections.sort(dailySchedule, (left, right) -> left.time.compareTo(right.time));
+    }
+
+    private void saveSchedule() {
+        JSONArray array = new JSONArray();
+        for (ScheduleItem item : dailySchedule) {
+            JSONObject saved = new JSONObject();
+            try {
+                saved.put("name", item.name);
+                saved.put("amount", item.amount);
+                saved.put("unit", item.unit);
+                saved.put("time", item.time);
+                saved.put("notes", item.notes);
+                array.put(saved);
+            } catch (Exception ignored) { }
+        }
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString("daily_schedule", array.toString()).apply();
+    }
+
     private void saveRecords() {
         JSONArray array = new JSONArray();
         for (Record record : records) {
@@ -421,6 +605,14 @@ public class MainActivity extends Activity {
             } catch (Exception ignored) { }
         }
         getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString(RECORDS_KEY, array.toString()).apply();
+    }
+
+    private static class ScheduleItem {
+        String name = "";
+        String amount = "";
+        String unit = "";
+        String time = "08:00";
+        String notes = "";
     }
 
     private static class Record {
